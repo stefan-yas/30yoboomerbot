@@ -149,7 +149,7 @@ if (cron.validate(cronSchedule)) {
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
     // Construct the full webhook URL
-    const fullWebhookUrl = `<span class="math-inline">\{webhookUrl\}</span>{webhookPath}`;
+    const fullWebhookUrl = `${webhookUrl}${webhookPath}`;
     console.log(`Setting webhook to: ${fullWebhookUrl}`);
 
     // Set the webhook; Telegram will send updates to your Render app URL
