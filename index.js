@@ -11,7 +11,11 @@ const webhookUrl = process.env.WEBHOOK_URL; // Base URL from Render
 const targetChatId = process.env.TARGET_CHAT_ID;
 const port = process.env.PORT || 3000; // Use Render's port or default to 3000
 const imageDir = path.join(__dirname, 'img');
+const kafaImageDir = path.join(__dirname, 'img', 'kafa'); // Path for /kafa images
 const webhookPath = `/webhook/${token}`; // Unique path for the webhook
+const timezone = "Europe/Belgrade"; // Set timezone
+const saturdayImageFilename = "saturday.jpg"; // Specific image for Saturdays
+const sundayImageFilename = "sunday.jpg";   // Specific image for Sundays
 
 if (!token || !webhookUrl || !targetChatId) {
     console.error("Error: BOT_TOKEN, WEBHOOK_URL, and TARGET_CHAT_ID must be set in environment variables.");
@@ -19,43 +23,41 @@ if (!token || !webhookUrl || !targetChatId) {
 }
 
 // --- Initialize Bot (Webhook Mode) ---
-const bot = new TelegramBot(token); // No polling: { polling: false } is default if no options object passed
+const bot = new TelegramBot(token);
 
 // --- Initialize Express App ---
 const app = express();
-// Middleware to parse JSON request bodies (Telegram sends updates as JSON)
 app.use(express.json());
 
 // --- Webhook Endpoint ---
-// Telegram will POST updates to this route
 app.post(webhookPath, (req, res) => {
     try {
-        bot.processUpdate(req.body); // Forward the update to the bot library
-        res.sendStatus(200); // Acknowledge receipt to Telegram
+        bot.processUpdate(req.body);
+        res.sendStatus(200);
     } catch (error) {
         console.error("Error processing webhook update:", error);
         res.sendStatus(500);
     }
 });
 
-// --- Basic root route (optional, for health check) ---
+// --- Basic root route ---
 app.get('/', (req, res) => {
     res.send('Telegram Bot is running!');
 });
 
 // --- Bot Command Handlers ---
-
 // /start command
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-    console.log(`Received /start from chat ID: ${chatId}`); // Log chat ID for debugging/setup
+    console.log(`Received /start from chat ID: ${chatId}`);
     bot.sendMessage(chatId, "Hello! I'm your friendly scheduler bot.");
 });
 
-// /kafa command
+// /kafa command - Now sends text AND a random image from img/kafa/
 bot.onText(/\/kafa/, (msg) => {
     const chatId = msg.chat.id;
-    // Placeholder reply - you can customize this
+
+    // 1. Send textual reply
     const replies = [
         "vreme je za kafindžonku!",
         "kaficaaaaa",
@@ -66,93 +68,167 @@ bot.onText(/\/kafa/, (msg) => {
     const randomReply = replies[Math.floor(Math.random() * replies.length)];
     bot.sendMessage(chatId, randomReply);
 
-    // --- Optional: Send an image instead/as well ---
-    /*
+    // 2. Send random image from img/kafa/
     try {
-        const files = fs.readdirSync(imageDir).filter(file => /\.(jpe?g|png|gif)$/i.test(file)); // Basic image filter
+        if (!fs.existsSync(kafaImageDir)) {
+             console.warn(`[/kafa command] Kafa image directory not found: ${kafaImageDir}`);
+             return; // Don't proceed if folder doesn't exist
+        }
+
+        const files = fs.readdirSync(kafaImageDir).filter(file => /\.(jpe?g|png|gif)$/i.test(file));
+
         if (files.length > 0) {
-            const randomImage = files[Math.floor(Math.random() * files.length)];
-            const imagePath = path.join(imageDir, randomImage);
-            bot.sendPhoto(chatId, imagePath, { caption: "Here's a random image!" })
-               .catch(err => console.error("Error sending photo for /kafa:", err));
+            const randomKafaImage = files[Math.floor(Math.random() * files.length)];
+            const imagePath = path.join(kafaImageDir, randomKafaImage);
+            console.log(`[/kafa command] Sending Kafa image ${randomKafaImage} to ${chatId}`);
+            bot.sendPhoto(chatId, imagePath)
+               .catch(err => console.error(`[/kafa command] Error sending photo to ${chatId}:`, err.response ? err.response.body : err.message));
         } else {
-            bot.sendMessage(chatId, "Hmm, I couldn't find any images for the /kafa command right now.");
+            console.warn(`[/kafa command] No images found in ${kafaImageDir}`);
         }
     } catch (error) {
-        console.error("Error reading image directory for /kafa:", error);
-        bot.sendMessage(chatId, "Sorry, something went wrong trying to find an image.");
+        console.error("[/kafa command] Error reading Kafa image directory:", error);
+        // Optionally send a message to the user, but might be noisy
+        // bot.sendMessage(chatId, "Sorry, I had trouble finding a Kafa image right now.");
     }
-    */
 });
 
-// --- Scheduled Message Function ---
-const sendScheduledImage = () => {
-    console.log(`[${new Date().toISOString()}] Running scheduled task for chat ID: ${targetChatId}`);
+// --- Scheduled Message Functions ---
+
+// Function for sending a random image on weekdays
+const sendRandomWeekdayImage = () => {
+    const taskName = "[Weekday Scheduler]";
+    console.log(`${taskName} [${new Date().toISOString()}] Running task for chat ID: ${targetChatId}`);
     try {
-        // Read images from the img directory
-        const files = fs.readdirSync(imageDir).filter(file => /\.(jpe?g|png|gif)$/i.test(file)); // Basic image filter
+        const files = fs.readdirSync(imageDir).filter(file =>
+            /\.(jpe?g|png|gif)$/i.test(file) &&
+            file !== saturdayImageFilename && // Exclude specific weekend files
+            file !== sundayImageFilename
+        );
 
         if (files.length === 0) {
-            console.warn(`[Scheduler] No images found in ${imageDir}. Skipping scheduled message.`);
-            // Optionally send a text message if no image found
-            // bot.sendMessage(targetChatId, "Scheduled check: No images found today!");
+            console.warn(`${taskName} No suitable weekday images found in ${imageDir}. Skipping message.`);
             return;
         }
 
-        // Select a random image
         const randomImage = files[Math.floor(Math.random() * files.length)];
         const imagePath = path.join(imageDir, randomImage);
-        const caption = "Your scheduled image has arrived!"; // Customize caption
+        const caption = "Dobro jutro! Evo današnje slike."; // Weekday caption
 
-        console.log(`[Scheduler] Sending image ${randomImage} to ${targetChatId}`);
-
-        // Send the photo
+        console.log(`${taskName} Sending random image ${randomImage} to ${targetChatId}`);
         bot.sendPhoto(targetChatId, imagePath, { caption: caption })
-            .then(() => {
-                console.log(`[Scheduler] Successfully sent ${randomImage} to ${targetChatId}`);
-            })
-            .catch((error) => {
-                console.error(`[Scheduler] Error sending photo to ${targetChatId}:`, error.response ? error.response.body : error.message);
-                 // Log more details if available
-                 if (error.response && error.response.body) {
-                     console.error(`[Scheduler] Telegram API Error Code: ${error.response.body.error_code}`);
-                     console.error(`[Scheduler] Telegram API Description: ${error.response.body.description}`);
-                 }
-            });
+            .then(() => console.log(`${taskName} Successfully sent ${randomImage} to ${targetChatId}`))
+            .catch((error) => logSendError(taskName, error, targetChatId));
 
     } catch (error) {
-        console.error("[Scheduler] Error reading image directory or processing schedule:", error);
-        // Optionally notify an admin or log centrally
-        // bot.sendMessage(ADMIN_CHAT_ID, `Error in scheduler: ${error.message}`);
+        console.error(`${taskName} Error reading image directory or processing schedule:`, error);
     }
 };
 
+// Function for sending the specific Saturday image
+const sendSaturdayImage = () => {
+    const taskName = "[Saturday Scheduler]";
+    console.log(`${taskName} [${new Date().toISOString()}] Running task for chat ID: ${targetChatId}`);
+    try {
+        const imagePath = path.join(imageDir, saturdayImageFilename);
+
+        if (!fs.existsSync(imagePath)) {
+            console.error(`${taskName} Specific Saturday image not found: ${imagePath}. Skipping message.`);
+            return;
+        }
+
+        const caption = "Dobro jutro! Uživajte u suboti!"; // Saturday caption
+
+        console.log(`${taskName} Sending specific Saturday image ${saturdayImageFilename} to ${targetChatId}`);
+        bot.sendPhoto(targetChatId, imagePath, { caption: caption })
+            .then(() => console.log(`${taskName} Successfully sent ${saturdayImageFilename} to ${targetChatId}`))
+            .catch((error) => logSendError(taskName, error, targetChatId));
+
+    } catch (error) {
+        console.error(`${taskName} Error processing Saturday schedule:`, error);
+    }
+};
+
+// Function for sending the specific Sunday image
+const sendSundayImage = () => {
+    const taskName = "[Sunday Scheduler]";
+    console.log(`${taskName} [${new Date().toISOString()}] Running task for chat ID: ${targetChatId}`);
+    try {
+        const imagePath = path.join(imageDir, sundayImageFilename);
+
+        if (!fs.existsSync(imagePath)) {
+            console.error(`${taskName} Specific Sunday image not found: ${imagePath}. Skipping message.`);
+            return;
+        }
+
+        const caption = "Dobro jutro! Uživajte u nedelji!"; // Sunday caption
+
+        console.log(`${taskName} Sending specific Sunday image ${sundayImageFilename} to ${targetChatId}`);
+        bot.sendPhoto(targetChatId, imagePath, { caption: caption })
+            .then(() => console.log(`${taskName} Successfully sent ${sundayImageFilename} to ${targetChatId}`))
+            .catch((error) => logSendError(taskName, error, targetChatId));
+
+    } catch (error) {
+        console.error(`${taskName} Error processing Sunday schedule:`, error);
+    }
+};
+
+
+// Helper function for logging send errors
+const logSendError = (taskName, error, chatId) => {
+    console.error(`${taskName} Error sending photo to ${chatId}:`, error.response ? error.response.body : error.message);
+    if (error.response && error.response.body) {
+        console.error(`${taskName} Telegram API Error Code: ${error.response.body.error_code}`);
+        console.error(`${taskName} Telegram API Description: ${error.response.body.description}`);
+    }
+}
+
+
 // --- Cron Job Scheduling ---
-// Example: Send a message every day at 9:00 AM server time
-// Cron pattern: second minute hour day-of-month month day-of-week
-// '0 9 * * *' means at 0 minutes past 9 AM, every day, every month, every day of the week.
-// Use https://crontab.guru/ to build your schedule
-const cronSchedule = '0 9 * * *'; // Default: 9 AM daily - CHANGE AS NEEDED
-if (cron.validate(cronSchedule)) {
-    cron.schedule(cronSchedule, sendScheduledImage, {
+
+// Schedule 1: Weekdays (Monday-Friday) at 9:00 AM Belgrade time
+const weekdayCron = '0 9 * * 1-5'; // 9:00 AM Monday to Friday
+if (cron.validate(weekdayCron)) {
+    cron.schedule(weekdayCron, sendRandomWeekdayImage, {
         scheduled: true,
-        // Optional: Set timezone, e.g., 'Europe/Belgrade'
-        // timezone: "Europe/Belgrade"
+        timezone: timezone
     });
-    console.log(`Scheduled task configured with pattern: ${cronSchedule}`);
+    console.log(`Weekday task scheduled with pattern: ${weekdayCron} in timezone ${timezone}`);
 } else {
-    console.error(`Invalid cron schedule pattern: ${cronSchedule}. Scheduler not started.`);
+    console.error(`Invalid weekday cron schedule pattern: ${weekdayCron}. Weekday scheduler not started.`);
+}
+
+// Schedule 2: Saturday at 9:00 AM Belgrade time
+const saturdayCron = '0 9 * * 6'; // 9:00 AM Saturday
+if (cron.validate(saturdayCron)) {
+    cron.schedule(saturdayCron, sendSaturdayImage, {
+        scheduled: true,
+        timezone: timezone
+    });
+    console.log(`Saturday task scheduled with pattern: ${saturdayCron} in timezone ${timezone}`);
+} else {
+    console.error(`Invalid Saturday cron schedule pattern: ${saturdayCron}. Saturday scheduler not started.`);
+}
+
+// Schedule 3: Sunday at 9:00 AM Belgrade time
+const sundayCron = '0 9 * * 0'; // 9:00 AM Sunday
+if (cron.validate(sundayCron)) {
+    cron.schedule(sundayCron, sendSundayImage, {
+        scheduled: true,
+        timezone: timezone
+    });
+    console.log(`Sunday task scheduled with pattern: ${sundayCron} in timezone ${timezone}`);
+} else {
+    console.error(`Invalid Sunday cron schedule pattern: ${sundayCron}. Sunday scheduler not started.`);
 }
 
 
 // --- Start Server and Set Webhook ---
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
-    // Construct the full webhook URL
     const fullWebhookUrl = `${webhookUrl}${webhookPath}`;
     console.log(`Setting webhook to: ${fullWebhookUrl}`);
 
-    // Set the webhook; Telegram will send updates to your Render app URL
     bot.setWebHook(fullWebhookUrl)
         .then(success => {
             if (success) {
@@ -169,21 +245,25 @@ app.listen(port, () => {
 // Optional: Graceful shutdown handling
 process.on('SIGINT', () => {
     console.log("SIGINT received. Shutting down gracefully...");
-    bot.deleteWebHook().then(() => { // Remove webhook before exiting
-       console.log("Webhook removed.");
-       process.exit(0);
-    }).catch(err => {
-       console.error("Error removing webhook:", err);
-       process.exit(1);
-    });
+    cron.getTasks().forEach(task => task.stop()); // Stop cron tasks
+    bot.deleteWebHook({ drop_pending_updates: true }) // Remove webhook, drop pending updates
+       .then(() => {
+           console.log("Webhook removed.");
+           process.exit(0);
+        }).catch(err => {
+           console.error("Error removing webhook:", err);
+           process.exit(1);
+        });
 });
 process.on('SIGTERM', () => {
     console.log("SIGTERM received. Shutting down gracefully...");
-     bot.deleteWebHook().then(() => {
-       console.log("Webhook removed.");
-       process.exit(0);
-    }).catch(err => {
-       console.error("Error removing webhook:", err);
-       process.exit(1);
-    });
+    cron.getTasks().forEach(task => task.stop()); // Stop cron tasks
+    bot.deleteWebHook({ drop_pending_updates: true })
+       .then(() => {
+           console.log("Webhook removed.");
+           process.exit(0);
+        }).catch(err => {
+           console.error("Error removing webhook:", err);
+           process.exit(1);
+        });
 });
